@@ -1,0 +1,506 @@
+---
+marp: true
+theme: default
+paginate: true
+size: 16:9
+style: |
+  section {
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    font-size: 28px;
+    line-height: 1.35;
+    color: #0f172a;
+  }
+  h1 {
+    font-size: 44px;
+    color: #1d4ed8;
+  }
+  h2 {
+    font-size: 40px;
+    color: #1d4ed8;
+  }
+  code {
+    font-size: 0.78em;
+  }
+  pre {
+    border-radius: 8px;
+  }
+  .note {
+    color: #475569;
+    font-size: 22px;
+  }
+---
+
+# React Native 串接 FastAPI 全端開發教學
+
+## 補充：從文章 CRUD 到聊天 App
+
+說明文章 CRUD 與聊天 App 示範程式之間的銜接、部署設定、資料保存限制、範例版登入設計、聊天輪詢與 `response_model` 延伸。
+
+---
+
+## S1. 本單元學習目標
+
+本單元會整理聊天 App 示範程式中的幾個重要觀念：
+
+- 文章 CRUD 與聊天 App 延伸教材的關係
+- 本機開發與部署環境的 API URL 差異
+- 記憶體假資料庫的限制
+- 範例版登入與正式授權的差別
+- 聊天室為什麼需要定期更新訊息
+- FastAPI `response_model` 如何讓 API 更完整
+
+<p class="note">學完這一段後，可以更清楚知道目前示範程式在整套課程中的位置，以及後續可以如何升級。</p>
+
+<!-- 圖片提示詞：教學補充總覽圖，顯示文章 CRUD、聊天 App、本機開發、部署、資料庫、登入授權、聊天更新、response model 六個主題，以清楚課程地圖風格呈現 -->
+
+---
+
+## S2. 兩段式課程架構
+
+第一階段：`fullstack-(01-44).yaml`
+
+
+- 使用文章 `Post` 做為單一資料模型
+- 練習 `GET / POST / PUT / DELETE`
+- 建立列表、新增、詳細、編輯、刪除等基礎流程
+
+第二階段：`fullstack-(45-84).yaml`
+
+- 把基礎 CRUD 概念延伸成聊天 App
+- 使用 `User`、`Friendship`、`Message` 多資料模型
+- 加入登入狀態、好友關係、聊天列表與訊息收發
+
+<p class="note">兩階段不是同一份程式逐行修改，而是先用文章 CRUD 打底，再用聊天 App 做完整應用。</p>
+
+<!-- 圖片提示詞：兩段式課程架構圖，第一階段文章 CRUD App，第二階段聊天 App，兩者中間用箭頭標示 CRUD 基礎延伸到多模型實務應用 -->
+
+---
+
+## S3. 為什麼聊天 App 不保留 Posts API
+
+在這個階段可以觀察到：前面介紹過 `/posts`，但目前聊天 App 後端沒有 `/posts`。
+
+原因是聊天 App 的資料模型與 API 任務已經改成：
+
+- `/auth/register`：註冊
+- `/auth/login`：登入
+- `/users/{user_id}/friends`：好友列表與加入好友
+- `/users/{user_id}/chats`：聊天列表
+- `/chats/{user_id}/{friend_id}/messages`：訊息列表與送訊息
+
+文章 CRUD 的概念仍然存在，只是資料模型從 `Post` 換成 `User`、`Friendship`、`Message`。
+
+---
+
+## S3. API 對照
+
+```text
+Article CRUD:
+  GET /posts
+  POST /posts
+  PUT /posts/{id}
+  DELETE /posts/{id}
+
+Chat App:
+  POST /auth/register
+  POST /auth/login
+  GET /users/{user_id}/friends
+  POST /users/{user_id}/friends
+  GET /chats/{user_id}/{friend_id}/messages
+  POST /chats/{user_id}/{friend_id}/messages
+```
+
+<!-- 圖片提示詞：API 對照表，左側文章 CRUD endpoints，右側聊天 App endpoints，顯示同樣是 REST API 但資料模型不同 -->
+
+---
+
+## S4. 本機開發 API URL
+
+React Native App 要連到 FastAPI Server 時，`API_BASE_URL` 必須依執行環境調整。
+
+常見情境：
+
+- iOS Simulator：通常可使用 `http://localhost:8000`
+- Android Emulator：通常使用 `http://10.0.2.2:8000`
+- 實體手機：必須使用電腦在同一個 Wi-Fi 中的區域網路 IP
+
+啟動 FastAPI 時要使用 `--host 0.0.0.0`，手機才有機會從區域網路連進來。
+
+```bash
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+```ts
+const API_BASE_URL = "http://192.168.1.10:8000";
+```
+
+<!-- 圖片提示詞：本機開發連線圖，電腦執行 FastAPI port 8000，iOS simulator、Android emulator、實體手機分別用 localhost、10.0.2.2、區域網路 IP 連線 -->
+
+---
+
+## S5. 部署後 API URL
+
+如果後端已部署到 Render 或其他雲端平台，前端就不再使用 `localhost` 或區域網路 IP。
+
+部署版會使用公開網址，例如：
+
+- `https://mychatbackend-eu2n.onrender.com`
+
+開發時需要清楚區分：
+
+- 本機版：適合課堂開發與即時修改
+- 部署版：適合使用實體手機測試，不必依賴同一個 Wi-Fi
+
+```ts
+export const API_BASE_URL = "https://mychatbackend-eu2n.onrender.com";
+// 請改成自己的 Render / Railway / Fly.io 後端網址
+```
+
+<!-- 圖片提示詞：部署版 API URL 示意圖，React Native App 透過網際網路連到 Render FastAPI Server，旁邊對照本機 localhost 開發模式 -->
+
+---
+
+## S6. 用 Log 確認目前連線網址
+
+當 App 出現 `Network request failed` 時，第一步是確認目前到底連到哪個 `API_BASE_URL`。
+
+可以在 `apiRequest()` 裡加入 `console.log`：
+
+- App 第一次呼叫 API 時印出 Base URL
+- 從 Metro terminal 或 Expo logs 查看輸出
+- 確認網址是否為本機 IP、Android emulator IP 或部署網址
+
+```ts
+let didLogApiBaseUrl = false;
+
+export async function apiRequest<T>(path: string, options = {}): Promise<T> {
+  if (!didLogApiBaseUrl) {
+    console.log(`[API] Base URL: ${API_BASE_URL}`);
+    didLogApiBaseUrl = true;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, ...);
+}
+```
+
+<!-- 圖片提示詞：Debug 流程圖，Network request failed 後先看 Metro console 的 API Base URL，再檢查後端 server、IP、port、Wi-Fi 與部署網址 -->
+
+---
+
+## S7. 記憶體假資料庫的限制
+
+目前後端使用 Python list 與 set 模擬資料庫：
+
+```py
+users: list[dict] = []
+friendships: set[tuple[str, str]] = set()
+messages: list[dict] = []
+```
+
+優點：
+
+- 容易觀察資料如何在 API 中流動
+- 不需要安裝資料庫
+- 可以專注理解 API 與前後端串接
+
+限制：
+
+- Server 重啟後資料會消失
+- 部署平台休眠或重新部署後資料也會消失
+- 不適合作為正式上線產品的資料儲存方式
+
+<!-- 圖片提示詞：記憶體假資料庫限制圖，FastAPI Server 內有 users friendships messages，重啟後資料消失，旁邊標示下一階段可換 SQLite 或 PostgreSQL -->
+
+---
+
+## S8. Seed Endpoint 的角色
+
+`/dev/seed` 可以快速建立示範資料：
+
+- Alice 使用者
+- Bob 使用者
+- Alice 與 Bob 的好友關係
+- 一則範例訊息
+
+這能避免每次重啟後都要手動註冊兩個帳號。
+
+使用原則：
+
+- `/dev/seed` 適合開發與示範階段
+- 正式上線時不應開放這類測試 endpoint
+- 若資料已存在，可以回傳「已建立過」避免重複加入
+
+```py
+@app.post("/dev/seed")
+def seed_data():
+    if users:
+        return {"message": "Seed data already exists"}
+```
+
+<!-- 圖片提示詞：Seed endpoint 教學圖，呼叫 /dev/seed 後自動建立 Alice、Bob、好友關係與一則訊息，並標示只適合開發環境 -->
+
+---
+
+## S9. 範例版登入不是正式授權
+
+目前聊天 App 的登入流程是範例版：
+
+- 前端送 `username` 與 `password`
+- 後端比對記憶體中的明文 `password`
+- 成功後回傳 `public_user`
+- 前端把 `user` 存在 `AuthContext`
+
+這個版本可以先用來理解登入狀態如何影響畫面，但它不是正式產品的安全設計。
+
+正式產品通常會加入：
+
+- 密碼雜湊
+- JWT 或 session
+- 後端從 token 判斷目前使用者
+- API 不應只相信 URL 裡的 `user_id`
+
+<!-- 圖片提示詞：範例版登入與正式授權比較圖，左側是 username password 回傳 user 存 AuthContext，右側是 password hash、JWT token、後端驗證身份 -->
+
+---
+
+## S10. AuthContext 的角色
+
+`AuthContext` 的主要用途是管理前端登入狀態：
+
+- `user`：目前登入者
+- `signIn`：登入後設定 user
+- `signOut`：登出後清空 user
+- `setUser`：個人資料更新後同步前端狀態
+
+重要觀念：
+
+- `AuthContext` 可以控制畫面顯示
+- `Redirect` 可以避免未登入者看到 Tabs
+- 但真正的資料權限仍應該由後端檢查
+
+```ts
+type AuthContextValue = {
+  user: User | null;
+  signIn: (user: User) => void;
+  signOut: () => void;
+  setUser: (user: User) => void;
+};
+```
+
+<!-- 圖片提示詞：AuthContext 教學定位圖，前端 AuthContext 控制 UI 狀態，後端 ensure_friends 與授權規則控制資料存取 -->
+
+---
+
+## S11. 後端仍要檢查資料權限
+
+即使前端已經隱藏未登入頁面，後端仍要檢查使用者是否有權讀取或送出資料。
+
+目前聊天 App 採用的基本授權規則：
+
+- `get_messages` 前先確認兩人是好友
+- `send_message` 前先確認兩人是好友
+- `sender_id` 必須等於 URL 中的 `user_id`
+
+```py
+def ensure_friends(user_a: str, user_b: str) -> None:
+    if friendship_key(user_a, user_b) not in friendships:
+        raise HTTPException(status_code=403, detail="Users are not friends")
+
+if payload.sender_id != user_id:
+    raise HTTPException(status_code=400, detail="Sender must match current user")
+```
+
+<p class="note">前端可以改善使用者體驗，但後端才是資料規則真正執行的位置。</p>
+
+<!-- 圖片提示詞：後端權限檢查流程圖，前端發送聊天請求後，FastAPI 先檢查好友關係與 sender_id，通過才讀寫 messages -->
+
+---
+
+## S12. 聊天訊息為什麼要更新
+
+文章 CRUD 的資料通常只在進入頁面時載入一次。
+
+但聊天 App 有不同需求：
+
+- 對方可能隨時傳新訊息
+- 聊天室停留期間也應該更新
+- 回到聊天列表時要看到最新一則訊息
+
+目前範例先使用輪詢 polling：
+
+- 每隔固定秒數呼叫一次 `getMessages`
+- 有新資料時更新畫面
+- 離開聊天室時停止輪詢
+
+後續若要做更即時的互動，可以改用 WebSocket。
+
+<!-- 圖片提示詞：聊天訊息更新方式圖，Polling 每 2 秒向 API 詢問一次新訊息，進階版本使用 WebSocket 即時推送，教學比較圖 -->
+
+---
+
+## S13. setInterval 與 Cleanup
+
+聊天室可以使用 `setInterval` 定期呼叫 API。
+
+但一定要在畫面離開時清除 interval：
+
+- 避免背景中持續呼叫 API
+- 避免同一頁重複建立多個 interval
+- 避免記憶體與網路資源浪費
+
+```tsx
+useFocusEffect(
+  useCallback(() => {
+    const intervalId = setInterval(refreshMessages, 2000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [friendId, user]),
+);
+```
+
+<p class="note">在 useFocusEffect 中 return cleanup function，就能在頁面 unfocus 時停止輪詢。</p>
+
+<!-- 圖片提示詞：setInterval cleanup 教學圖，聊天室 focus 時啟動每 2 秒更新，離開聊天室 unfocus 時 clearInterval 停止背景更新 -->
+
+---
+
+## S14. 避免重複更新畫面
+
+輪詢會一直拿資料，所以要避免每次都重新 `setMessages`。
+
+可以先比較目前 messages 與 API 回傳的新 messages：
+
+- 長度不同：代表有新增或刪除
+- id 不同：代表資料變了
+- text 或 created_at 不同：代表內容變了
+
+```ts
+function areMessagesEqual(current: Message[], next: Message[]) {
+  if (current.length !== next.length) return false;
+  return current.every((message, index) => {
+    const nextMessage = next[index];
+    return (
+      message.id === nextMessage.id &&
+      message.text === nextMessage.text &&
+      message.created_at === nextMessage.created_at
+    );
+  });
+}
+```
+
+<!-- 圖片提示詞：訊息陣列比較流程圖，API 回傳 messages 後先比較 length、id、text、created_at，相同則不更新畫面，不同才 setMessages -->
+
+---
+
+## S15. 自動捲到最新訊息
+
+聊天室載入或送出訊息後，使用者通常期待畫面停在最新訊息。
+
+可以使用：
+
+- `useRef` 取得 FlatList 參考
+- messages 改變時觸發 `useEffect`
+- `requestAnimationFrame` 等畫面更新後再 `scrollToEnd`
+
+```tsx
+const messageListRef = useRef<FlatList<Message>>(null);
+
+useEffect(() => {
+  if (messages.length === 0) return;
+  requestAnimationFrame(() =>
+    messageListRef.current?.scrollToEnd({ animated: true })
+  );
+}, [messages]);
+```
+
+<p class="note">這是 UI 細節，但能讓聊天體驗更接近真實 App。</p>
+
+<!-- 圖片提示詞：聊天列表自動捲動示意圖，FlatList 中有多則訊息，新增訊息後畫面自動 scrollToEnd 到最新泡泡 -->
+
+---
+
+## S16. Response Model 的價值
+
+目前後端使用 Pydantic Model 驗證 request body。
+
+進一步可以加入 `response_model`，讓 FastAPI 也檢查 response 格式。
+
+優點：
+
+- API 文件更清楚
+- 回傳資料格式更穩定
+- 可以避免不小心把 password 回傳給前端
+- 前端 TypeScript 型別更容易對齊
+
+```py
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    name: str
+    birthday: Optional[date] = None
+    avatar_url: Optional[str] = None
+    created_at: str
+
+@app.post("/auth/login", response_model=UserResponse)
+def login(payload: LoginRequest):
+    ...
+```
+
+<!-- 圖片提示詞：FastAPI response_model 教學圖，route function 回傳 dict，response_model 過濾與驗證後輸出穩定 JSON 給 React Native -->
+
+---
+
+## S17. 可延伸的 Response 型別
+
+聊天 App 可以逐步補上這些 response model：
+
+- `UserResponse`：公開使用者資料
+- `MessageResponse`：單則訊息
+- `ChatSummaryResponse`：聊天列表摘要
+- `BasicMessageResponse`：基本操作結果，例如加入好友成功
+
+```py
+class MessageResponse(BaseModel):
+    id: str
+    sender_id: str
+    receiver_id: str
+    text: str
+    created_at: str
+
+class ChatSummaryResponse(BaseModel):
+    friend: UserResponse
+    last_message: Optional[MessageResponse] = None
+    last_time: Optional[str] = None
+```
+
+<p class="note">在學習順序上，可以先理解 request model，再接著理解 response model。</p>
+
+<!-- 圖片提示詞：Response 型別關係圖，UserResponse、MessageResponse、ChatSummaryResponse 彼此組合，對應 React Native 的 User、Message、ChatSummary type -->
+
+---
+
+## S18. 下一階段學習路線
+
+完成目前聊天 App 後，可以進入下一階段：
+
+1. 把記憶體假資料庫換成 SQLite
+2. 將 SQLite 升級為 PostgreSQL 或雲端資料庫
+3. 使用 bcrypt 儲存密碼雜湊
+4. 使用 JWT 實作正式登入授權
+5. 使用 WebSocket 實作即時聊天
+6. 補上測試與部署流程
+
+```text
+Memory List
+  -> SQLite
+  -> PostgreSQL
+  -> Password Hash + JWT
+  -> WebSocket
+  -> Tests + Deployment
+```
+
+<p class="note">目前專案是完整入門版，後續還能逐步升級成更接近正式產品的架構。</p>
+
+<!-- 圖片提示詞：聊天 App 下一階段路線圖，從記憶體資料庫一路延伸到 SQLite、PostgreSQL、bcrypt、JWT、WebSocket、測試部署，課程路線風格 -->
