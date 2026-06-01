@@ -1,49 +1,88 @@
-import { apiRequest } from "./client";
+import * as fastapi from "./fastapi";
+import * as firebase from "./firebase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ChatSummary, LoginInput, Message, ProfileInput, RegisterInput, User } from "../types/chat";
 
-export function register(input: RegisterInput) {
-  return apiRequest<User>("/auth/register", {
-    method: "POST",
-    body: input,
-  });
+export type ApiProvider = "custom" | "firebase";
+
+// 預設為自訂 API (FastAPI)
+let activeProvider: ApiProvider = "custom";
+
+export async function loadApiProvider(): Promise<ApiProvider> {
+  try {
+    const saved = await AsyncStorage.getItem("api_provider");
+    if (saved === "firebase") {
+      activeProvider = "firebase";
+    } else {
+      activeProvider = "custom";
+    }
+  } catch (err) {
+    console.error("[API Switcher] 讀取 API 設定失敗，使用預設值:", err);
+    activeProvider = "custom";
+  }
+  return activeProvider;
 }
 
-export function login(input: LoginInput) {
-  return apiRequest<User>("/auth/login", {
-    method: "POST",
-    body: input,
-  });
+export async function setApiProvider(provider: ApiProvider): Promise<void> {
+  try {
+    await AsyncStorage.setItem("api_provider", provider);
+    activeProvider = provider;
+    console.log(`[API Switcher] 已成功切換 API 來源至: ${provider}`);
+  } catch (err) {
+    console.error("[API Switcher] 儲存 API 設定失敗:", err);
+  }
 }
 
-export function updateProfile(userId: string, input: ProfileInput) {
-  return apiRequest<User>(`/users/${userId}`, {
-    method: "PUT",
-    body: input,
-  });
+export function getActiveProvider(): ApiProvider {
+  return activeProvider;
 }
 
-export function getFriends(userId: string) {
-  return apiRequest<User[]>(`/users/${userId}/friends`);
+// ---------------- 動態分流的 API 介面 ----------------
+
+export function register(input: RegisterInput): Promise<User> {
+  return activeProvider === "firebase" 
+    ? firebase.register(input) 
+    : fastapi.register(input);
 }
 
-export function addFriend(userId: string, friendId: string) {
-  return apiRequest<{ message: string }>(`/users/${userId}/friends`, {
-    method: "POST",
-    body: { friend_id: friendId },
-  });
+export function login(input: LoginInput): Promise<User> {
+  return activeProvider === "firebase" 
+    ? firebase.login(input) 
+    : fastapi.login(input);
 }
 
-export function getChats(userId: string) {
-  return apiRequest<ChatSummary[]>(`/users/${userId}/chats`);
+export function updateProfile(userId: string, input: ProfileInput): Promise<User> {
+  return activeProvider === "firebase" 
+    ? firebase.updateProfile(userId, input) 
+    : fastapi.updateProfile(userId, input);
 }
 
-export function getMessages(userId: string, friendId: string) {
-  return apiRequest<Message[]>(`/chats/${userId}/${friendId}/messages`);
+export function getFriends(userId: string): Promise<User[]> {
+  return activeProvider === "firebase" 
+    ? firebase.getFriends(userId) 
+    : fastapi.getFriends(userId);
 }
 
-export function sendMessage(userId: string, friendId: string, text: string) {
-  return apiRequest<Message>(`/chats/${userId}/${friendId}/messages`, {
-    method: "POST",
-    body: { sender_id: userId, text },
-  });
+export function addFriend(userId: string, friendId: string): Promise<{ message: string }> {
+  return activeProvider === "firebase" 
+    ? firebase.addFriend(userId, friendId) 
+    : fastapi.addFriend(userId, friendId);
+}
+
+export function getChats(userId: string): Promise<ChatSummary[]> {
+  return activeProvider === "firebase" 
+    ? firebase.getChats(userId) 
+    : fastapi.getChats(userId);
+}
+
+export function getMessages(userId: string, friendId: string): Promise<Message[]> {
+  return activeProvider === "firebase" 
+    ? firebase.getMessages(userId, friendId) 
+    : fastapi.getMessages(userId, friendId);
+}
+
+export function sendMessage(userId: string, friendId: string, text: string): Promise<Message> {
+  return activeProvider === "firebase" 
+    ? firebase.sendMessage(userId, friendId, text) 
+    : fastapi.sendMessage(userId, friendId, text);
 }
