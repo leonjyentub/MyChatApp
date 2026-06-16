@@ -12,8 +12,8 @@ import * as firebase from "./firebase";
 
 export type ApiProvider = "custom" | "firebase";
 
-// 預設使用 Firebase；只有使用者明確切換後才改用 FastAPI。
-let activeProvider: ApiProvider = "firebase";
+// 預設使用 custom；需要使用者明確切換
+let activeProvider: ApiProvider = "custom";
 
 export async function loadApiProvider(): Promise<ApiProvider> {
   try {
