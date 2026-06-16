@@ -8,9 +8,11 @@
     "scheme": "mychatapp",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "com.leonjye.mychatapp",
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.leonjye.mychatapp",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

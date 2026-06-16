@@ -1,7 +1,11 @@
 import { 
   createUserWithEmailAndPassword, 
+  GoogleAuthProvider,
+  onAuthStateChanged,
   signInWithEmailAndPassword, 
-  signOut as firebaseSignOut 
+  signInWithCredential,
+  signOut as firebaseSignOut,
+  type Unsubscribe,
 } from "firebase/auth";
 import { 
   doc, 
@@ -18,61 +22,182 @@ import {
 import { auth, db } from "./firebaseConfig";
 import type { ChatSummary, LoginInput, Message, ProfileInput, RegisterInput, User } from "../types/chat";
 
+function getFirebaseErrorCode(err: unknown): string | undefined {
+  return typeof err === "object" && err !== null && "code" in err
+    ? String((err as { code?: unknown }).code)
+    : undefined;
+}
+
+function toFriendlyFirebaseError(err: unknown, fallback: string): Error {
+  const code = getFirebaseErrorCode(err);
+
+  switch (code) {
+    case "auth/email-already-in-use":
+      return new Error("這個帳號已經被註冊，請改用登入或換一個帳號。");
+    case "auth/account-exists-with-different-credential":
+      return new Error("這個 Google 信箱已經使用其他登入方式註冊。");
+    case "auth/invalid-email":
+      return new Error("帳號格式不正確，請只使用英文字母、數字、底線、句點或連字號。");
+    case "auth/invalid-id-token":
+      return new Error("Google 登入憑證無效，請重新嘗試。");
+    case "auth/invalid-credential":
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+      return new Error("帳號或密碼不正確。");
+    case "auth/operation-not-allowed":
+    case "auth/configuration-not-found":
+      return new Error("Firebase 尚未啟用 Email/Password 登入，請到 Firebase Console 的 Authentication 啟用。");
+    case "auth/weak-password":
+      return new Error("密碼至少需要 6 個字元。");
+    case "permission-denied":
+      return new Error("Firestore 權限不足，請檢查 Firebase Security Rules。");
+    case undefined:
+      return err instanceof Error ? err : new Error(fallback);
+    default:
+      return new Error(`${fallback}（${code}）`);
+  }
+}
+
+function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase();
+}
+
+function validateAuthInput(input: LoginInput | RegisterInput) {
+  const username = normalizeUsername(input.username);
+
+  if (!username) {
+    throw new Error("請輸入帳號。");
+  }
+
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+    throw new Error("帳號需為 3 到 32 個字元，且只能使用英文字母、數字、底線、句點或連字號。");
+  }
+
+  if (input.password.length < 6) {
+    throw new Error("密碼至少需要 6 個字元。");
+  }
+
+  return username;
+}
+
 // 輔助函式：將使用者名稱對應成 Firebase Auth 所需的虛擬 Email
 function getVirtualEmail(username: string): string {
-  return `${username.trim().toLowerCase()}@mychatapp.local`;
+  return `${normalizeUsername(username)}@mychatapp.local`;
+}
+
+function usernameFromEmail(email: string | null): string {
+  return email?.replace(/@mychatapp\.local$/, "").split("@")[0] || "user";
+}
+
+async function ensureUserProfile(
+  uid: string,
+  username: string,
+  profile?: Partial<Pick<User, "name" | "avatar_url">>,
+): Promise<User> {
+  const userDocRef = doc(db, "users", uid);
+  const userDoc = await getDoc(userDocRef);
+
+  if (userDoc.exists()) {
+    return userDoc.data() as User;
+  }
+
+  const nowStr = new Date().toISOString();
+  const newUser: User = {
+    id: uid,
+    username,
+    name: profile?.name?.trim() || username,
+    birthday: null,
+    avatar_url: profile?.avatar_url || null,
+    created_at: nowStr,
+  };
+
+  await setDoc(userDocRef, newUser);
+  return newUser;
+}
+
+export function subscribeToAuthState(
+  onUser: (user: User | null) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  return onAuthStateChanged(
+    auth,
+    async (firebaseUser) => {
+      try {
+        if (!firebaseUser) {
+          onUser(null);
+          return;
+        }
+
+        const username = usernameFromEmail(firebaseUser.email);
+        const user = await ensureUserProfile(firebaseUser.uid, username, {
+          name: firebaseUser.displayName || undefined,
+          avatar_url: firebaseUser.photoURL || undefined,
+        });
+        onUser(user);
+      } catch (err) {
+        onError(err instanceof Error ? err : new Error("讀取 Firebase 登入狀態失敗"));
+      }
+    },
+    onError,
+  );
 }
 
 // 註冊帳號
 export async function register(input: RegisterInput): Promise<User> {
-  const email = getVirtualEmail(input.username);
-  
-  // 1. 在 Firebase Auth 建立帳號
-  const userCredential = await createUserWithEmailAndPassword(auth, email, input.password);
-  const uid = userCredential.user.uid;
-  const nowStr = new Date().toISOString();
+  const username = validateAuthInput(input);
+  const email = getVirtualEmail(username);
 
-  const newUser: User = {
-    id: uid,
-    username: input.username.trim(),
-    name: input.display_name?.trim() || input.username.trim(),
-    birthday: null,
-    avatar_url: null,
-    created_at: nowStr,
-  };
-
-  // 2. 在 Firestore 的 users 集合中建立使用者文件
-  await setDoc(doc(db, "users", uid), newUser);
-
-  return newUser;
-}
-
-// 登入帳號
-export async function login(input: LoginInput): Promise<User> {
-  const email = getVirtualEmail(input.username);
-  
-  // 1. 使用 Firebase Auth 登入
-  const userCredential = await signInWithEmailAndPassword(auth, email, input.password);
-  const uid = userCredential.user.uid;
-
-  // 2. 從 Firestore 讀取使用者文件
-  const userDoc = await getDoc(doc(db, "users", uid));
-  if (!userDoc.exists()) {
-    // 若 Auth 存在但 Firestore 無文件，補建一個預設文件
+  try {
+    // 1. 在 Firebase Auth 建立帳號
+    const userCredential = await createUserWithEmailAndPassword(auth, email, input.password);
+    const uid = userCredential.user.uid;
     const nowStr = new Date().toISOString();
+
     const newUser: User = {
       id: uid,
-      username: input.username.trim(),
-      name: input.username.trim(),
+      username,
+      name: input.display_name?.trim() || username,
       birthday: null,
       avatar_url: null,
       created_at: nowStr,
     };
-    await setDoc(doc(db, "users", uid), newUser);
-    return newUser;
-  }
 
-  return userDoc.data() as User;
+    // 2. 在 Firestore 的 users 集合中建立使用者文件
+    await setDoc(doc(db, "users", uid), newUser);
+
+    return newUser;
+  } catch (err) {
+    throw toFriendlyFirebaseError(err, "註冊失敗");
+  }
+}
+
+// 登入帳號
+export async function login(input: LoginInput): Promise<User> {
+  const username = validateAuthInput(input);
+  const email = getVirtualEmail(username);
+
+  try {
+    // 1. 使用 Firebase Auth 登入
+    const userCredential = await signInWithEmailAndPassword(auth, email, input.password);
+    return ensureUserProfile(userCredential.user.uid, username);
+  } catch (err) {
+    throw toFriendlyFirebaseError(err, "登入失敗");
+  }
+}
+
+export async function signInWithGoogleIdToken(idToken: string): Promise<User> {
+  try {
+    const credential = GoogleAuthProvider.credential(idToken);
+    const userCredential = await signInWithCredential(auth, credential);
+    const firebaseUser = userCredential.user;
+
+    return ensureUserProfile(firebaseUser.uid, usernameFromEmail(firebaseUser.email), {
+      name: firebaseUser.displayName || undefined,
+      avatar_url: firebaseUser.photoURL || undefined,
+    });
+  } catch (err) {
+    throw toFriendlyFirebaseError(err, "Google 登入失敗");
+  }
 }
 
 // 登出帳號
