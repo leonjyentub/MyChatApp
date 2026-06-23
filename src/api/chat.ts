@@ -1,18 +1,24 @@
 import { apiRequest } from "./client";
-import type { ChatSummary, LoginInput, Message, ProfileInput, RegisterInput, User } from "../types/chat";
+import type { AuthSession, ChatSummary, LoginInput, Message, ProfileInput, RegisterInput, User } from "../types/chat";
 
 export function register(input: RegisterInput) {
   return apiRequest<User>("/auth/register", {
     method: "POST",
     body: input,
+    auth: false,
   });
 }
 
 export function login(input: LoginInput) {
-  return apiRequest<User>("/auth/login", {
+  return apiRequest<AuthSession>("/auth/login", {
     method: "POST",
     body: input,
+    auth: false,
   });
+}
+
+export function getUser(userId: string) {
+  return apiRequest<User>(`/users/${userId}`);
 }
 
 export function updateProfile(userId: string, input: ProfileInput) {

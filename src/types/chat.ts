@@ -7,6 +7,14 @@ export type User = {
   created_at: string;
 };
 
+export type AuthSession = {
+  access_token: string;
+  token_type: "bearer" | string;
+  expires_in: number;
+  role: "admin" | "user" | string;
+  user: User;
+};
+
 export type Message = {
   id: string;
   sender_id: string;

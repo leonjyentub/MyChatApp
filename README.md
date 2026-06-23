@@ -16,6 +16,22 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+## FastAPI connection
+
+The app uses `https://mychatbackend-eu2n.onrender.com` by default. To connect to
+another FastAPI server, copy `.env.example` to `.env.local` and set:
+
+```bash
+EXPO_PUBLIC_API_URL=http://192.168.1.10:8000
+```
+
+When testing on a physical phone, use the computer's LAN IP address instead of
+`localhost`. The phone and computer must be on the same network. Reload the app
+after changing the environment variable.
+
+After login, the JWT is stored with Expo SecureStore on Android/iOS (and
+`localStorage` on web), then sent as a Bearer token to protected API routes.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

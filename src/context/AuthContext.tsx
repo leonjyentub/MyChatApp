@@ -1,26 +1,77 @@
-import { createContext, PropsWithChildren, useContext, useMemo, useState } from "react";
-import type { User } from "../types/chat";
+import {
+  createContext,
+  PropsWithChildren,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { setUnauthorizedHandler } from "../api/client";
+import {
+  clearStoredSession,
+  getStoredSession,
+  storeSession,
+} from "../api/sessionStorage";
+import type { AuthSession, User } from "../types/chat";
 
 type AuthContextValue = {
   user: User | null;
-  signIn: (user: User) => void;
-  signOut: () => void;
-  setUser: (user: User) => void;
+  isLoading: boolean;
+  signIn: (session: AuthSession) => Promise<void>;
+  signOut: () => Promise<void>;
+  setUser: (user: User) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: PropsWithChildren) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUserState] = useState<User | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const value = useMemo(
+  useEffect(() => {
+    let active = true;
+    getStoredSession().then((storedSession) => {
+      if (!active) return;
+      setSession(storedSession);
+      setUserState(storedSession?.user ?? null);
+      setIsLoading(false);
+    });
+
+    setUnauthorizedHandler(() => {
+      setSession(null);
+      setUserState(null);
+    });
+
+    return () => {
+      active = false;
+      setUnauthorizedHandler(undefined);
+    };
+  }, []);
+
+  const value = useMemo<AuthContextValue>(
     () => ({
       user,
-      signIn: setUser,
-      signOut: () => setUser(null),
-      setUser,
+      isLoading,
+      signIn: async (nextSession) => {
+        await storeSession(nextSession);
+        setSession(nextSession);
+        setUserState(nextSession.user);
+      },
+      signOut: async () => {
+        await clearStoredSession();
+        setSession(null);
+        setUserState(null);
+      },
+      setUser: async (nextUser) => {
+        if (!session) return;
+        const nextSession = { ...session, user: nextUser };
+        await storeSession(nextSession);
+        setSession(nextSession);
+        setUserState(nextUser);
+      },
     }),
-    [user],
+    [isLoading, session, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -25,15 +25,15 @@ export default function SettingsScreen() {
         birthday: birthday || null,
         avatar_url: avatarUrl || null,
       });
-      setUser(updated);
+      await setUser(updated);
       setMessage("已儲存個人設定");
     } catch (err) {
       setError(err instanceof Error ? err.message : "儲存失敗");
     }
   };
 
-  const onSignOut = () => {
-    signOut();
+  const onSignOut = async () => {
+    await signOut();
     router.replace("/");
   };
 

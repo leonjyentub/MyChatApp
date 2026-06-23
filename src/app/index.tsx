@@ -1,4 +1,4 @@
-import { Link, router } from "expo-router";
+import { Link, Redirect, router } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { login } from "../api/chat";
@@ -7,7 +7,7 @@ import { commonStyles } from "../components/styles";
 import { useAuth } from "../context/AuthContext";
 
 export default function LoginScreen() {
-  const { signIn } = useAuth();
+  const { isLoading: isRestoringSession, signIn, user } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,8 +17,8 @@ export default function LoginScreen() {
     setError("");
     setLoading(true);
     try {
-      const user = await login({ username, password });
-      signIn(user);
+      const session = await login({ username: username.trim(), password });
+      await signIn(session);
       router.replace("/friends");
     } catch (err) {
       setError(err instanceof Error ? err.message : "登入失敗");
@@ -26,6 +26,9 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
+
+  if (isRestoringSession) return null;
+  if (user) return <Redirect href="/friends" />;
 
   return (
     <Screen>

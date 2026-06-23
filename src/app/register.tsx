@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { register } from "../api/chat";
+import { login, register } from "../api/chat";
 import { Screen } from "../components/Screen";
 import { commonStyles } from "../components/styles";
 import { useAuth } from "../context/AuthContext";
@@ -18,12 +18,14 @@ export default function RegisterScreen() {
     setError("");
     setLoading(true);
     try {
-      const user = await register({
-        username,
+      const normalizedUsername = username.trim();
+      await register({
+        username: normalizedUsername,
         password,
-        display_name: displayName || undefined,
+        display_name: displayName.trim() || undefined,
       });
-      signIn(user);
+      const session = await login({ username: normalizedUsername, password });
+      await signIn(session);
       router.replace("/friends");
     } catch (err) {
       setError(err instanceof Error ? err.message : "註冊失敗");
