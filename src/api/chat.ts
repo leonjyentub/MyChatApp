@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { ApiRequestError, apiRequest } from "./client";
 import type { AuthSession, ChatSummary, LoginInput, Message, ProfileInput, RegisterInput, User } from "../types/chat";
 
 export function register(input: RegisterInput) {
@@ -39,8 +39,21 @@ export function addFriend(userId: string, friendId: string) {
   });
 }
 
-export function getChats(userId: string) {
-  return apiRequest<ChatSummary[]>(`/users/${userId}/chats`);
+export async function getChats(userId: string) {
+  try {
+    return await apiRequest<ChatSummary[]>(`/users/${userId}/chats`);
+  } catch (error) {
+    if (!(error instanceof ApiRequestError) || error.status < 500) {
+      throw error;
+    }
+
+    const friends = await getFriends(userId);
+    return friends.map((friend) => ({
+      friend,
+      last_message: null,
+      last_time: null,
+    }));
+  }
 }
 
 export function getMessages(userId: string, friendId: string) {

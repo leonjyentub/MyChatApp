@@ -21,6 +21,7 @@ export default function ChatsScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!user) return;
+      setError("");
       getChats(user.id)
         .then(setChats)
         .catch((err) =>
